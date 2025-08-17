@@ -1,0 +1,170 @@
+import os
+import time
+import random
+import threading
+import ctypes
+from tkinter import messagebox, Tk
+from datetime import datetime
+
+RED = "\033[91m"
+GREEN = "\033[92m"
+RESET = "\033[0m"
+
+LICENSE_FILE = "licenses.txt"
+system_log = []
+
+# ---------------- System Logs ----------------
+def log_action(action):
+    system_log.append(f"{time.strftime('%H:%M:%S')} - {action}")
+
+def clear_screen():
+    os.system('cls' if os.name=='nt' else 'clear')
+
+# ---------------- License Check ----------------
+def validate_key(username, key):
+    if not os.path.exists(LICENSE_FILE):
+        return False, "License file not found!"
+    with open(LICENSE_FILE, "r") as f:
+        for line in f:
+            parts = line.strip().split(",")
+            if len(parts) != 3:
+                continue
+            u, k, expiry = parts
+            if u == username and k == key:
+                if expiry == "Lifetime":
+                    return True, "Lifetime"
+                else:
+                    try:
+                        exp_date = datetime.strptime(expiry, "%Y-%m-%d")
+                        if datetime.now() <= exp_date:
+                            days_left = (exp_date - datetime.now()).days
+                            return True, f"{days_left} days left"
+                        else:
+                            return False, "Key expired"
+                    except:
+                        return False, "Invalid expiry date"
+    return False, "Invalid username/key"
+
+# ---------------- Connected Text Art ----------------
+def show_connected_art():
+    art_lines = [
+        "|----------------------------------------------|",
+        "          Welcome To Connected                 |",
+        "|----------------------------------------------|",
+        "   ___ ___  _ __  _ __   ___  ___| |_ ___  __| |",
+        "  / __/ _ \\| '_ \\| '_ \\ / _ \\/ __| __/ _ \\/ _` |",
+        " | (_| (_) | | | | | | |  __/ (__| ||  __/ (_| |",
+        "  \\___\\___/|_| |_|_| |_|\___|\\___|\\__\\___|\\__,_|",
+        "-------------------------------------------------|"
+    ]
+    for line in art_lines:
+        for char in line:
+            print(f"{RED}{char}{RESET}", end="", flush=True)
+            time.sleep(0.01)
+        print()
+    time.sleep(0.3)
+
+# ---------------- Example Tab Options ----------------
+system_cleanup_options = ["Clear Temp Files", "Clear Cache", "Delete Old Logs"]
+performance_boost_options = ["Free RAM", "Disable Startup Apps", "Enable Performance Mode", "Close All Unnecessary Applications"]
+network_optimization_options = ["Flush DNS", "Reset Network Adapter", "Clear ARP Cache"]
+maintenance_options = ["Check Disk", "Repair System Files", "Create Restore Point"]
+
+all_tabs = [
+    ("System Cleanup", system_cleanup_options),
+    ("Performance Boost", performance_boost_options),
+    ("Network Optimization", network_optimization_options),
+    ("Maintenance", maintenance_options)
+]
+
+def run_option(option):
+    print(f"{RED}Running {option}...{RESET}")
+    log_action(f"Ran {option}")
+    time.sleep(random.uniform(0.5, 1.5))
+    print(f"{GREEN}{option} completed!{RESET}\n")
+    time.sleep(0.3)
+
+def run_tab(tab_name, options):
+    while True:
+        clear_screen()
+        print(f"{RED}=== {tab_name} ==={RESET}")
+        for i,opt in enumerate(options,1):
+            print(f"{RED}[{i}] {opt}{RESET}")
+        print(f"{RED}[0] Back{RESET}")
+        choice = input(f"{RED}Choose option number: {RESET}")
+        if choice=='0':
+            break
+        try:
+            run_option(options[int(choice)-1])
+        except (ValueError, IndexError):
+            print(f"{RED}Invalid choice!{RESET}")
+            time.sleep(1)
+
+# ---------------- Self-Destruct ----------------
+def self_destruct():
+    def popup_notify():
+        root = Tk()
+        root.withdraw()
+        messagebox.showinfo("Connected Shutdown", "Connected has shutdown (user request.)")
+        root.destroy()
+
+    # Hacker mask icon (Windows)
+    ctypes.windll.user32.MessageBoxW(0, "Self-Destruct Initiated!", "💀 Hacker Alert 💀", 0x40 | 0x1)
+    print(f"{RED}Self-Destruct triggered! Closing in 5 seconds...{RESET}")
+    time.sleep(5)
+    popup_notify()
+    os._exit(0)
+
+# ---------------- Main Menu ----------------
+# ---------------- Main Menu ----------------
+def main_menu():
+    while True:
+        clear_screen()
+
+        print(f"{RED}[1] System Cleanup{RESET}")
+        print(f"{RED}[2] Performance Boost{RESET}")
+        print(f"{RED}[3] Network Optimization{RESET}")
+        print(f"{RED}[4] Maintenance{RESET}")
+        print(f"{RED}[5] Self-Destruct{RESET}")
+        print(f"{RED}[0] Exit{RESET}")
+
+        choice = input(f"{RED}Choose a tab: {RESET}")
+
+        if choice=='1':
+            run_tab("System Cleanup", system_cleanup_options)
+        elif choice=='2':
+            run_tab("Performance Boost", performance_boost_options)
+        elif choice=='3':
+            run_tab("Network Optimization", network_optimization_options)
+        elif choice=='4':
+            run_tab("Maintenance", maintenance_options)
+        elif choice=='5':
+            self_destruct()
+        elif choice=='0':
+            print(f"{RED}Exiting...{RESET}")
+            break
+        else:
+            print(f"{RED}Invalid choice!{RESET}")
+            time.sleep(1)
+
+# ---------------- Login ----------------
+def login():
+    clear_screen()
+    print(f"{RED}Connected Software{RESET}")
+    username = input(f"{RED}Enter username: {RESET}").strip()
+    key = input(f"{RED}Enter key: {RESET}").strip()
+
+    valid, info = validate_key(username, key)
+    if valid:
+        clear_screen()
+        show_connected_art()
+        print(f"{GREEN}✅ Key valid! {info}{RESET}")
+        time.sleep(1.5)
+        main_menu()
+    else:
+        print(f"{RED}❌ {info}{RESET}")
+        time.sleep(2)
+        login()  # retry login
+
+if __name__ == "__main__":
+    login()
