@@ -1,0 +1,47 @@
+@echo off
+title 👨‍💻👨‍💻👨‍💻👨‍💻👨‍💻👨‍💻👨‍💻
+color 0a
+
+echo ========================================
+echo   @bnz
+echo ========================================
+echo.
+
+:: --- Clear temporary files ---
+echo ...
+del /q /f /s "%TEMP%\*" >nul 2>&1
+del /q /f /s "C:\Windows\Temp\*" >nul 2>&1
+echo Done.
+echo.
+
+:: --- Flush DNS cache ---
+echo ...
+ipconfig /flushdns
+echo Done.
+echo.
+
+:: --- Clear memory standby list (requires RAMMap or EmptyStandbyList) ---
+echo ...
+:: If you have SysInternals "EmptyStandbyList.exe", uncomment below
+:: EmptyStandbyList.exe workingsets
+echo Done.
+echo.
+
+:: --- Set power plan to High Performance ---
+echo ...
+powercfg -setactive SCHEME_MIN
+echo Done.
+echo.
+
+:: --- Lower priority of background processes ---
+echo Lowering background process priority...
+for /f "tokens=1" %%a in ('tasklist /fi "status eq running" ^| findstr /v "System Idle Process"') do (
+    wmic process where "name='%%a'" CALL setpriority 64 >nul 2>&1
+)
+echo Done.
+echo.
+
+echo ========================================
+echo !
+echo ========================================
+pause
