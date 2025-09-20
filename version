@@ -8,7 +8,7 @@ import ctypes
 import importlib
 import threading
 from tkinter import Tk, Label, Button
-import requests  # <-- Added for GitHub key fetching
+import requests  # for GitHub key fetching
 
 # ---------------- AUTO INSTALL ----------------
 def install_package(pkg):
@@ -41,20 +41,30 @@ RESET_COLOR = "\033[0m"
 LOG_FILE = "logs.txt"
 
 # ---------------- LICENSE KEYS (from GitHub) ----------------
-KEYS_URL = "https://github.com/xoduhs/Ooze/blob/main/keys"
+KEYS_URL = "https://raw.githubusercontent.com/xoduhs/Ooze/main/keys"
 used_keys = {}
 
 def fetch_keys():
-    """Fetch keys.json from GitHub and return as dict"""
+    """Fetch keys.json from GitHub and return as dict safely"""
     try:
         res = requests.get(KEYS_URL, timeout=5)
         res.raise_for_status()
+        if res.text.lstrip().startswith("<"):
+            raise ValueError("Received HTML instead of JSON. Make sure to use the RAW GitHub URL!")
         data = res.json()
-        return data.get("valid_keys", {})  # expects dict like {key: [username, days_valid]}
+        if not isinstance(data, dict) or "valid_keys" not in data:
+            raise ValueError("Invalid JSON structure. Must contain 'valid_keys' dictionary.")
+        return data.get("valid_keys", {})
+    except requests.exceptions.RequestException as e:
+        purple_print(f"⚠ Network error while fetching keys: {e}")
+        log_action(f"Network error fetching keys: {e}")
+    except ValueError as ve:
+        purple_print(f"⚠ Key fetch error: {ve}")
+        log_action(f"Key fetch error: {ve}")
     except Exception as e:
-        purple_print(f"⚠ Failed to fetch keys from GitHub: {e}")
-        log_action(f"Failed to fetch keys from GitHub: {e}")
-        return {}
+        purple_print(f"⚠ Unexpected error fetching keys: {e}")
+        log_action(f"Unexpected error fetching keys: {e}")
+    return {}  # safe fallback
 
 # ---------------- NOTIFIER ----------------
 toaster = ToastNotifier()
@@ -86,9 +96,7 @@ def check_key():
     clear_screen()
     purple_print("🔍 Connected System - License Check\n")
     key = input_purple("Enter your license key: ").strip()
-
-    KEYS = fetch_keys()  # fetch latest keys from GitHub
-
+    KEYS = fetch_keys()
     if key in KEYS:
         username, days_valid = KEYS[key]
         if key not in used_keys:
@@ -273,35 +281,21 @@ def view_logs():
 # ---------------- GUI SMOOTH MODE ----------------
 def smooth_mode():
     optimizations = [
-        ("Disable Windows Tips", lambda: os.system(
-            'reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" /v SubscribedContent-338387Enabled /t REG_DWORD /d 0 /f')),
-        ("Disable Startup Delay", lambda: os.system(
-            'reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Serialize" /v StartupDelayInMSec /t REG_DWORD /d 0 /f')),
-        ("Disable Remote Assistance", lambda: os.system(
-            'reg add "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance" /v fAllowToGetHelp /t REG_DWORD /d 0 /f')),
+        ("Disable Windows Tips", lambda: os.system('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" /v SubscribedContent-338387Enabled /t REG_DWORD /d 0 /f')),
+        ("Disable Startup Delay", lambda: os.system('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Serialize" /v StartupDelayInMSec /t REG_DWORD /d 0 /f')),
+        ("Disable Remote Assistance", lambda: os.system('reg add "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance" /v fAllowToGetHelp /t REG_DWORD /d 0 /f')),
         ("Disable Hibernation", lambda: os.system("powercfg -h off")),
-        ("Disable Error Reporting", lambda: os.system(
-            'reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting" /v Disabled /t REG_DWORD /d 1 /f')),
-        ("Disable Delivery Optimization", lambda: os.system(
-            'reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\DeliveryOptimization\\Config" /v DODownloadMode /t REG_DWORD /d 0 /f')),
-        ("Disable Background Apps", lambda: os.system(
-            'reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\BackgroundAccessApplications" /v GlobalUserDisabled /t REG_DWORD /d 1 /f')),
-        ("Turn Off Animations", lambda: os.system(
-            'reg add "HKCU\\Control Panel\\Desktop\\WindowMetrics" /v MinAnimate /t REG_SZ /d 0 /f')),
-        ("Disable Transparency Effects", lambda: os.system(
-            'reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize" /v EnableTransparency /t REG_DWORD /d 0 /f')),
-        ("Disable Location Tracking", lambda: os.system(
-            'reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\LocationAndSensors" /v DisableLocation /t REG_DWORD /d 1 /f')),
-        ("Disable Windows Ink Workspace", lambda: os.system(
-            'reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\WindowsInkWorkspace" /v AllowWindowsInkWorkspace /t REG_DWORD /d 0 /f')),
-        ("Disable Game DVR", lambda: os.system(
-            'reg add "HKCU\\System\\GameConfigStore" /v GameDVR_Enabled /t REG_DWORD /d 0 /f')),
-        ("Disable Spotlight on Lock Screen", lambda: os.system(
-            'reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" /v RotatingLockScreenEnabled /t REG_DWORD /d 0 /f')),
-        ("Turn Off Advertising ID", lambda: os.system(
-            'reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\AdvertisingInfo" /v Enabled /t REG_DWORD /d 0 /f')),
-        ("Optimize Search Indexing", lambda: os.system(
-            'sc stop WSearch && sc config WSearch start=disabled'))
+        ("Disable Error Reporting", lambda: os.system('reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting" /v Disabled /t REG_DWORD /d 1 /f')),
+        ("Disable Delivery Optimization", lambda: os.system('reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\DeliveryOptimization\\Config" /v DODownloadMode /t REG_DWORD /d 0 /f')),
+        ("Disable Background Apps", lambda: os.system('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\BackgroundAccessApplications" /v GlobalUserDisabled /t REG_DWORD /d 1 /f')),
+        ("Turn Off Animations", lambda: os.system('reg add "HKCU\\Control Panel\\Desktop\\WindowMetrics" /v MinAnimate /t REG_SZ /d 0 /f')),
+        ("Disable Transparency Effects", lambda: os.system('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize" /v EnableTransparency /t REG_DWORD /d 0 /f')),
+        ("Disable Location Tracking", lambda: os.system('reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\LocationAndSensors" /v DisableLocation /t REG_DWORD /d 1 /f')),
+        ("Disable Windows Ink Workspace", lambda: os.system('reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\WindowsInkWorkspace" /v AllowWindowsInkWorkspace /t REG_DWORD /d 0 /f')),
+        ("Disable Game DVR", lambda: os.system('reg add "HKCU\\System\\GameConfigStore" /v GameDVR_Enabled /t REG_DWORD /d 0 /f')),
+        ("Disable Spotlight on Lock Screen", lambda: os.system('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" /v RotatingLockScreenEnabled /t REG_DWORD /d 0 /f')),
+        ("Turn Off Advertising ID", lambda: os.system('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\AdvertisingInfo" /v Enabled /t REG_DWORD /d 0 /f')),
+        ("Optimize Search Indexing", lambda: os.system('sc stop WSearch && sc config WSearch start=disabled'))
     ]
 
     for name, func in optimizations:
