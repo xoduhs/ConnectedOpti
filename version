@@ -7,7 +7,7 @@ import json
 from datetime import datetime
 
 # -------------------------
-# AUTO-INSTALL DEPENDENCIES t
+# AUTO-INSTALL DEPENDENCIES
 # -------------------------
 def install_and_import(package):
     try:
