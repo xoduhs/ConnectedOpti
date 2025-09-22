@@ -2,9 +2,10 @@ import os
 import sys
 import subprocess
 import tempfile
-import importlib.util
+import importlib
 import json
 from datetime import datetime
+import requests
 
 # -------------------------
 # AUTO-INSTALL DEPENDENCIES
@@ -20,14 +21,61 @@ def install_and_import(package):
 for pkg in ["PyQt5", "psutil", "pyqtgraph", "requests"]:
     install_and_import(pkg)
 
-from PyQt5 import QtWidgets, QtCore, QtGui
-import psutil, requests, pyqtgraph as pg
+from PyQt5 import QtWidgets, QtCore
+import psutil, pyqtgraph as pg
 
 # -------------------------
-# GITHUB CONFIG
+# CONFIG
 # -------------------------
 GITHUB_KEYS_URL = "https://raw.githubusercontent.com/xoduhs/Ooze/main/keys"
-GITHUB_OPTION10_FILE = "https://raw.githubusercontent.com/xoduhs/Ooze/main/CPU%20ARRANGEMENT"
+GITHUB_VERSION_URL = "https://raw.githubusercontent.com/xoduhs/Ooze/main/version"
+GITHUB_CODE_URL = "https://raw.githubusercontent.com/xoduhs/Ooze/main/update.json"
+LOCAL_VERSION_FILE = os.path.join(tempfile.gettempdir(), "ooze_version.txt")
+CURRENT_VERSION = "0.3"
+
+# -------------------------
+# VERSION MANAGEMENT
+# -------------------------
+def get_local_version():
+    if os.path.exists(LOCAL_VERSION_FILE):
+        with open(LOCAL_VERSION_FILE, "r") as f:
+            return f.read().strip()
+    return CURRENT_VERSION
+
+def set_local_version(version):
+    with open(LOCAL_VERSION_FILE, "w") as f:
+        f.write(version)
+
+def show_update_code(code_text):
+    """Show the full updated code in a scrollable text box"""
+    dialog = QtWidgets.QDialog()
+    dialog.setWindowTitle("Ooze Update Available")
+    dialog.setMinimumSize(800, 600)
+    layout = QtWidgets.QVBoxLayout()
+    text_edit = QtWidgets.QTextEdit()
+    text_edit.setReadOnly(True)
+    text_edit.setText(code_text)
+    layout.addWidget(text_edit)
+    btn = QtWidgets.QPushButton("Close")
+    btn.clicked.connect(dialog.accept)
+    layout.addWidget(btn)
+    dialog.setLayout(layout)
+    dialog.exec_()
+
+def check_for_update():
+    try:
+        r_version = requests.get(GITHUB_VERSION_URL, timeout=5)
+        github_version = r_version.text.strip()
+        local_version = get_local_version()
+        if github_version != local_version:
+            r_code = requests.get(GITHUB_CODE_URL, timeout=10)
+            code_text = r_code.text
+            show_update_code(code_text)
+            set_local_version(github_version)
+            QtWidgets.QMessageBox.information(None, "Update Applied", "Version updated. Please restart the program.")
+            sys.exit()
+    except Exception as e:
+        print(f"Update check failed: {e}")
 
 # -------------------------
 # KEY VALIDATION
@@ -66,16 +114,6 @@ def run_command(cmd):
     except Exception as e:
         print(f"Error: {e}")
 
-def run_remote_bat(url):
-    try:
-        r = requests.get(url, timeout=5)
-        bat_path = os.path.join(tempfile.gettempdir(), "ooze_option.bat")
-        with open(bat_path, "wb") as f:
-            f.write(r.content)
-        subprocess.run(bat_path, shell=True)
-    except Exception as e:
-        print(f"Remote BAT failed: {e}")
-
 # -------------------------
 # MAIN GUI
 # -------------------------
@@ -93,22 +131,19 @@ class OozeOptimizer(QtWidgets.QMainWindow):
         self.home_tab = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout()
 
-        # Owners label
         owners_label = QtWidgets.QLabel("Owners: @ql3s @yerkv")
         owners_label.setAlignment(QtCore.Qt.AlignRight)
         layout.addWidget(owners_label)
 
-        # Graphs
         graph_layout = QtWidgets.QHBoxLayout()
         self.cpu_graph = pg.PlotWidget(title="CPU Usage")
-        self.gpu_graph = pg.PlotWidget(title="GPU (simulated)")
+        self.mem_graph = pg.PlotWidget(title="Memory Usage")
         self.cpu_graph.setYRange(0, 100)
-        self.gpu_graph.setYRange(0, 100)
+        self.mem_graph.setYRange(0, 100)
         graph_layout.addWidget(self.cpu_graph)
-        graph_layout.addWidget(self.gpu_graph)
+        graph_layout.addWidget(self.mem_graph)
         layout.addLayout(graph_layout)
 
-        # Run All button
         run_all_btn = QtWidgets.QPushButton("Run All Optimizations")
         run_all_btn.clicked.connect(self.run_all_opts)
         layout.addWidget(run_all_btn)
@@ -116,17 +151,16 @@ class OozeOptimizer(QtWidgets.QMainWindow):
         self.home_tab.setLayout(layout)
         self.tabs.addTab(self.home_tab, "Home")
 
-        # Add optimization tabs
+        # Add safe optimization tabs
         self.add_opt_tab("Windows", self.windows_opts())
         self.add_opt_tab("Network", self.network_opts())
-        self.add_opt_tab("GPU", self.gpu_opts())
         self.add_opt_tab("Extra", self.extra_opts())
 
-        # Timer for CPU/GPU graph
-        self.cpu_data, self.gpu_data = [], []
-        self.timer = QtCore.QTimer()
-        self.timer.timeout.connect(self.update_graphs)
-        self.timer.start(1000)
+        # Timer for CPU/Memory graph
+        self.cpu_data, self.mem_data = [], []
+        self.graph_timer = QtCore.QTimer()
+        self.graph_timer.timeout.connect(self.update_graphs)
+        self.graph_timer.start(1000)
 
     def add_opt_tab(self, name, opts):
         tab = QtWidgets.QWidget()
@@ -140,13 +174,13 @@ class OozeOptimizer(QtWidgets.QMainWindow):
 
     def update_graphs(self):
         cpu = psutil.cpu_percent()
-        gpu = psutil.virtual_memory().percent  # placeholder for GPU
+        mem = psutil.virtual_memory().percent
         self.cpu_data.append(cpu)
-        self.gpu_data.append(gpu)
+        self.mem_data.append(mem)
         if len(self.cpu_data) > 20: self.cpu_data.pop(0)
-        if len(self.gpu_data) > 20: self.gpu_data.pop(0)
+        if len(self.mem_data) > 20: self.mem_data.pop(0)
         self.cpu_graph.plot(self.cpu_data, clear=True, pen='y')
-        self.gpu_graph.plot(self.gpu_data, clear=True, pen='r')
+        self.mem_graph.plot(self.mem_data, clear=True, pen='r')
 
     def run_all_opts(self):
         for tab_index in range(1, self.tabs.count()):
@@ -155,82 +189,33 @@ class OozeOptimizer(QtWidgets.QMainWindow):
                 btn.click()
 
     # -------------------------
-    # OPTIMIZATIONS
+    # SAFE OPTIMIZATIONS
     # -------------------------
     def windows_opts(self):
         return [
             ("Clear Temp Files", lambda: run_command("del /s /f /q %temp%\\*")),
             ("Disk Cleanup", lambda: run_command("cleanmgr /sagerun:1")),
-            ("Disable Startup Apps", lambda: run_command("wmic startup where 'name is not null' delete")),
-            ("Reset Windows Update", lambda: run_command("net stop wuauserv && net start wuauserv")),
-            ("Defrag Disk", lambda: run_command("defrag C: /O")),
             ("Clear Prefetch", lambda: run_command("del /s /f /q C:\\Windows\\Prefetch\\*")),
-            ("Stop Telemetry", lambda: run_command("sc stop DiagTrack")),
-            ("Clear Event Logs", lambda: run_command("wevtutil cl System")),
+            ("Clear Recycle Bin", lambda: run_command("rd /s /q C:\\$Recycle.bin")),
             ("Optimize Power Plan", lambda: run_command("powercfg -setactive SCHEME_MIN")),
             ("Enable Fast Startup", lambda: run_command("powercfg /hibernate on")),
-            ("Clear Recycle Bin", lambda: run_command("rd /s /q C:\\$Recycle.bin")),
-            ("Reset Search Index", lambda: run_command("sc stop WSearch && sc start WSearch")),
-            ("Clear Store Cache", lambda: run_command("wsreset.exe")),
-            ("Remote CPU Arrangement", lambda: run_remote_bat(GITHUB_OPTION10_FILE)),
+            ("Clear Event Logs", lambda: run_command("wevtutil cl System")),
             ("Reset Network", lambda: run_command("netsh int ip reset")),
         ]
 
     def network_opts(self):
         return [
-            ("Flush DNS", lambda: run_command("ipconfig /flushdns")),
-            ("Reset Winsock", lambda: run_command("netsh winsock reset")),
-            ("Set DNS Google", lambda: run_command("netsh interface ip set dns name=\"Wi-Fi\" static 8.8.8.8")),
-            ("Enable ECN", lambda: run_command("netsh int tcp set global ecncapability=enabled")),
-            ("Disable Nagle", lambda: run_command("reg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces /v TcpNoDelay /t REG_DWORD /d 1 /f")),
-            ("Release IP", lambda: run_command("ipconfig /release")),
-            ("Renew IP", lambda: run_command("ipconfig /renew")),
-            ("Clear ARP", lambda: run_command("arp -d *")),
-            ("Reset Proxy", lambda: run_command("netsh winhttp reset proxy")),
-            ("Enable QoS", lambda: run_command("gpupdate /force")),
-            ("Disable Telemetry Upload", lambda: run_command("sc stop dmwappushservice")),
-            ("Reset Firewall", lambda: run_command("netsh advfirewall reset")),
             ("Ping Google", lambda: run_command("ping 8.8.8.8")),
             ("Ping Cloudflare", lambda: run_command("ping 1.1.1.1")),
             ("Optimize TCP", lambda: run_command("netsh int tcp set global autotuninglevel=normal")),
         ]
 
-    def gpu_opts(self):
-        return [
-            ("Clear Shader Cache", lambda: run_command("del /s /f /q %LOCALAPPDATA%\\NVIDIA\\DXCache\\*")),
-            ("Reset Driver Cache", lambda: run_command("rundll32.exe pnpclean.dll,RunDLL_PnpClean /DRIVERS /MAXCLEAN")),
-            ("Enable HAGS", lambda: run_command("reg add HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences /v DirectXUserGpuPreferences /t REG_SZ /d \"HardwareAcceleratedGpuScheduling=1\" /f")),
-            ("Optimize DirectX", lambda: run_command("dxcpl")),
-            ("Run DXDiag", lambda: run_command("dxdiag")),
-            ("Reset NVIDIA Cache", lambda: run_command("del /s /f /q %ProgramData%\\NVIDIA Corporation\\NV_Cache\\*")),
-            ("AMD Reset Cache", lambda: run_command("del /s /f /q %LOCALAPPDATA%\\AMD\\DxCache\\*")),
-            ("Max Performance GPU", lambda: run_command("powercfg -setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOPOWERDOWN 0")),
-            ("Disable Fullscreen Opt", lambda: run_command("reg add HKCU\\System\\GameConfigStore /v GameDVR_DSEBehavior /t REG_DWORD /d 2 /f")),
-            ("Clear Vulkan Cache", lambda: run_command("del /s /f /q %LOCALAPPDATA%\\VulkanLayerCache\\*")),
-            ("Force Dedicated GPU", lambda: run_command("reg add HKCU\\Software\\Microsoft\\DirectX /v PreferDedicatedGpu /t REG_DWORD /d 1 /f")),
-            ("Reset Scaling", lambda: run_command("DPISettings.exe")),
-            ("Enable VRR", lambda: run_command("reg add HKCU\\Software\\Microsoft\\DirectX /v VariableRefreshRate /t REG_DWORD /d 1 /f")),
-            ("Optimize WDDM", lambda: run_command("reg add HKLM\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers /v HwSchMode /t REG_DWORD /d 2 /f")),
-            ("Registry GPU Boost", lambda: run_command("reg add HKCU\\Software\\NVIDIA Corporation\\Global /v PowerMizerEnable /t REG_DWORD /d 1 /f")),
-        ]
-
     def extra_opts(self):
         return [
-            ("Enable Game Mode", lambda: run_command("reg add HKCU\\Software\\Microsoft\\GameBar /v AllowAutoGameMode /t REG_DWORD /d 1 /f")),
-            ("Stop Telemetry", lambda: run_command("sc stop DiagTrack")),
-            ("Disable Cortana", lambda: run_command("reg add HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search /v AllowCortana /t REG_DWORD /d 0 /f")),
-            ("Disable Xbox Game Bar", lambda: run_command("reg add HKCU\\Software\\Microsoft\\GameBar /v ShowStartupPanel /t REG_DWORD /d 0 /f")),
-            ("Disable DVR Capture", lambda: run_command("reg add HKCU\\System\\GameConfigStore /v GameDVR_Enabled /t REG_DWORD /d 0 /f")),
-            ("Stop Background Apps", lambda: run_command("reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\BackgroundAccessApplications /v GlobalUserDisabled /t REG_DWORD /d 1 /f")),
-            ("Boost Game Priority", lambda: run_command("wmic process where name='explorer.exe' CALL setpriority 128")),
-            ("Optimize Virtual Memory", lambda: run_command("wmic computersystem where name='%computername%' set AutomaticManagedPagefile=True")),
-            ("Clear Hibernation", lambda: run_command("powercfg -h off")),
-            ("Clear Restore Points", lambda: run_command("vssadmin delete shadows /all /quiet")),
-            ("Enable TRIM", lambda: run_command("fsutil behavior set DisableDeleteNotify 0")),
-            ("Disable Transparency", lambda: run_command("reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize /v EnableTransparency /t REG_DWORD /d 0 /f")),
-            ("Optimize Explorer", lambda: run_command("reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer /v AltTabSettings /t REG_DWORD /d 1 /f")),
-            ("Clear Superfetch", lambda: run_command("sc stop SysMain")),
-            ("Clear Prefetch", lambda: run_command("del /s /f /q C:\\Windows\\Prefetch\\*")),
+            ("Clear Temp Internet Files", lambda: run_command("RunDll32.exe InetCpl.cpl,ClearMyTracksByProcess 8")),
+            ("Clear Clipboard", lambda: run_command("echo off | clip")),
+            ("Reset File Explorer View", lambda: run_command("taskkill /f /im explorer.exe & start explorer.exe")),
+            ("Clear Windows Store Cache", lambda: run_command("wsreset.exe")),
         ]
 
 # -------------------------
@@ -238,6 +223,7 @@ class OozeOptimizer(QtWidgets.QMainWindow):
 # -------------------------
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
+    check_for_update()
     validate_key()
     window = OozeOptimizer()
     window.show()
